@@ -1,0 +1,230 @@
+
+# Guía Completa para ICA 2: Proyecto Integral con GitHub Actions
+
+## Objetivo
+Configurar un pipeline CI/CD completo para una aplicación Flask usando GitHub Actions. Utilizaremos:
+- Runners autoalojados (Linux y Windows en VMs locales)
+- Artifacts
+- GitHub Packages (imagen Docker)
+- Service Containers
+- Custom Actions
+- Selenium para pruebas E2E
+
+---
+
+## Requisitos Previos
+
+- GitHub repo con tu app Flask + pruebas unitarias + pruebas Selenium
+- Docker instalado en ambas VMs
+- Dos máquinas virtuales: una Linux, una Windows
+- GitHub CLI o acceso web al repo
+- Python, pip y Selenium configurados
+- Tu imagen de la app construida y publicada en Docker Hub o GitHub Packages
+
+---
+
+## Paso 1: Agregar pruebas unitarias (si no existen)
+
+Asegúrate de tener un archivo `test_app.py` con pruebas que puedan correr con `pytest` o `unittest`.
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+---
+
+## Paso 2: Crear workflow para correr pruebas y generar artifact
+
+Archivo `.github/workflows/unit-tests.yml`:
+
+```yaml
+name: Unit Tests and Artifacts
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests and store report
+      run: |
+        mkdir -p test-reports
+        python -m unittest discover -s tests > test-reports/results.txt
+
+    - name: Upload test report artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-report
+        path: test-reports/results.txt
+```
+
+---
+
+## Paso 3: Configurar runners autoalojados
+
+### En la VM Linux y la VM Windows:
+
+1. Ir a tu repositorio > Settings > Actions > Runners > New self-hosted runner.
+2. Seleccionar el SO (Linux/Windows) y seguir las instrucciones.
+3. Ejecutar el servicio en ambas máquinas.
+
+**Importante:** mantener el servicio corriendo.
+
+---
+
+## Paso 4: Modificar el workflow para usar ambos runners
+
+```yaml
+jobs:
+  run-on-linux:
+    runs-on: [self-hosted, linux]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Echo on Linux
+      run: echo "Running on Linux"
+
+  run-on-windows:
+    runs-on: [self-hosted, windows]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Echo on Windows
+      run: echo "Running on Windows"
+```
+
+---
+
+## Paso 5: Publicar imagen Docker en GitHub Packages
+
+Archivo `Dockerfile`:
+
+```Dockerfile
+FROM python:3.10-slim
+WORKDIR /app
+COPY . .
+RUN pip install -r requirements.txt
+CMD ["python", "app.py"]
+```
+
+Workflow para build + push:
+
+```yaml
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      packages: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Login to GitHub Container Registry
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+    - name: Build and Push Docker image
+      run: |
+        docker build -t ghcr.io/${{ github.repository }}/flask-app:latest .
+        docker push ghcr.io/${{ github.repository }}/flask-app:latest
+```
+
+---
+
+## Paso 6: Service container para pruebas de integración
+
+```yaml
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      flask:
+        image: ghcr.io/<user>/<repo>/flask-app:latest
+        ports:
+          - 5000:5000
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Esperar a que el contenedor esté listo
+      run: |
+        sleep 10
+        curl http://localhost:5000 || exit 1
+```
+
+---
+
+## Paso 7: Crear Custom Action
+
+Carpeta: `.github/actions/setup-python-env/action.yml`
+
+```yaml
+name: Setup Python Env
+description: Instala dependencias de Python
+runs:
+  using: "composite"
+  steps:
+    - run: python -m pip install --upgrade pip
+    - run: pip install -r requirements.txt
+```
+
+Usar en workflow:
+
+```yaml
+- name: Set up env
+  uses: ./.github/actions/setup-python-env
+```
+
+---
+
+## Paso 8: Pruebas con Selenium en runner Windows
+
+```yaml
+jobs:
+  e2e-tests:
+    runs-on: [self-hosted, windows]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install selenium
+
+    - name: Run Selenium tests
+      run: python tests/selenium_tests.py
+```
+
+---
+
+## Paso 9: Verifica todo en GitHub Actions
+
+1. Accede a la pestaña **Actions**.
+2. Ejecuta manualmente o haz un push.
+3. Asegúrate de que:
+   - Se generan los artifacts
+   - Los workflows corren en Linux y Windows
+   - El contenedor funciona
+   - Las pruebas Selenium pasan
+
+---
+
+¡Listo! Puedes presentar esto como evidencia del cumplimiento completo de la actividad ICA 2.
